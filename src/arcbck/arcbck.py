@@ -134,11 +134,12 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
-    LOGGER.info(f"Found {len(filtered_items)} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
+    found_items = len(filtered_items)
+    LOGGER.info(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
     LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
     # Function to back up an item
     def backup_item(item, thread_logger):
-        thread_logger.info(f"Backing up '{item.title}' ({item.type}).")
+        thread_logger.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
         try:
             
             # Build item save path
@@ -176,17 +177,17 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 export_item = item
             thread_logger.info(f"Downloading '{item.title}' to '{save_tag}'.")
             export_item.download(save_path=save_path)
-            thread_logger.info(f"Backup complete for '{item.title}'.")
+            
             
             with count_lock:
                 backup_count[0] += 1
-            
+            thread_logger.info(f"Backup complete for '{item.title}'. ({backup_count[0]}/{found_items})")
             # Optionally, delete the exported item if you don't want to keep it online
             if delete_backup_online and delete:
                 export_item.delete()
                 
         except Exception:
-            thread_logger.exception(f"Failed to back up '{item.title}'.")
+            thread_logger.exception(f"Error with '{item.title}'.")
             if delete_backup_online and delete:
                 try:
                     export_item.delete()
@@ -206,7 +207,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             try:
                 backup_item(item, thread_logger)
             except Exception as e:
-                LOGGER.error(f"Error backing up item {item.title}: {e}")
+                LOGGER.error(f"Issue with item {item.title}: {e}")
 
     # Create and start threads
     for item in filtered_items:
@@ -222,4 +223,4 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     
     END_TIME = time.time()    
-    LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{len(filtered_items)}), Time ({END_TIME-START_TIME}s)")
+    LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{found_items}), Time ({END_TIME-START_TIME}s)")
