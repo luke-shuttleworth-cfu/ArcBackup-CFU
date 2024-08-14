@@ -44,8 +44,8 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_prefix: str, backup_tags: list[str], backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool):
-    LOGGER.INFO("Beginning backup process...")
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool):
+    LOGGER.info("Beginning backup process...")
     
     # ----- Connect to arcgis -----
     LOGGER.info("Connecting to ArcGIS...")
@@ -59,18 +59,28 @@ def run(backup_directory: str, backup_prefix: str, backup_tags: list[str], backu
     # ----- Create backup directory -----
     LOGGER.info("Creating backup directory...")
     current_date = datetime.now().strftime(date_format)
-    directory_name = backup_prefix + current_date
+    directory_name = backup_directory_prefix + current_date
     full_directory_path = os.path.join(backup_directory, directory_name)
     LOGGER.debug(f"Creating backup directory '{full_directory_path}'.")
     
     try:
-        os.makedirs(name=full_directory_path, mode=oct(directory_permissions), exist_ok=False)
-    except FileExistsError:
-        LOGGER.exception(f"Backup {directory_name} already exists.")
+        # Create the base directory
+        os.makedirs(full_directory_path, mode=directory_permissions, exist_ok=True)
+        LOGGER.info(f"Base directory '{full_directory_path}' created successfully.")
+        
+        # Create each subdirectory inside the base directory
+        for name in directory_tags:
+            subdirectory_path = os.path.join(full_directory_path, name)
+            os.makedirs(subdirectory_path, mode=directory_permissions, exist_ok=False)
+            LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully or already exists.")
+    
     except PermissionError:
-        LOGGER.exception(f"Permission denied while creating backup directory '{full_directory_path}'.")
-    except Exception:
-        LOGGER.exception(f"An error occured making backup directory '{directory_name}'.")
+        LOGGER.exception(f"Permission denied while creating directory '{full_directory_path}' or its subdirectories.")
+    except FileExistsError:
+        LOGGER.exception(f"An error occured while creating directory, '{full_directory_path}' already exists.")
+        raise    
+    except Exception as e:
+        LOGGER.exception(f"An error occurred while creating directory '{full_directory_path}' or its subdirectories: {e}")
     
     # ----- Delete old backups -----
     LOGGER.info("Removing old backups...")
@@ -90,12 +100,12 @@ def run(backup_directory: str, backup_prefix: str, backup_tags: list[str], backu
     existing_directories = [entry for entry in entries if os.path.isdir(os.path.join(backup_directory, entry))]
     
     # Delete old backup folders
-    while len(existing_directories > archive_number):
+    while len(existing_directories) > archive_number:
         oldest_date = None
         oldest_filename = None
 
         for filename in existing_directories:
-            date = extract_date_from_filename(filename, backup_prefix, date_format)
+            date = extract_date_from_filename(filename, backup_directory_prefix, date_format)
             if date:
                 if oldest_date is None or date < oldest_date:
                     oldest_date = date
@@ -114,3 +124,45 @@ def run(backup_directory: str, backup_prefix: str, backup_tags: list[str], backu
     
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
+    
+    # Search for items with the specified tags
+    search_query = "tags:(" + " OR ".join(backup_tags) + ")"
+    items = gis.content.search(query=search_query, max_items=1000)
+    filtered_items = [item for item in items if item.type not in backup_exclude_types]
+    LOGGER.info(f"Found {len(filtered_items)} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
+    LOGGER.debug(f"Items found: {filtered_items}.")
+    # Function to back up an item
+    def backup_item(item):
+        LOGGER.info(f"Backing up '{item.title}' ({item.type}).")
+        try:
+            
+            # Build item save path
+            directory_tag = [tag for tag in item.tags if tag in directory_tags]
+            if len(directory_tag) > 1:
+                LOGGER.warn(f"Multiple directory tags found for '{item.title}', {directory_tag}.")
+                save_tag = directory_tag[0]
+            elif len(directory_tag) < 1:
+                LOGGER.warn(f"No directory tag found for item '{item.title}'.")
+                save_tag = uncategorized_save_tag
+            else:
+                save_tag = directory_tag[0]
+            
+            save_path = os.path.join(full_directory_path, save_tag)
+            
+            
+            # Download item
+            if item.type in ['Feature Service', 'Vector Tile Service']:
+                LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
+                export_item = item.export(title=item.title + backup_file_suffix, export_format="File Geodatabase")
+            LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
+            export_item.download(save_path=save_path)
+            LOGGER.info(f"Backup complete for '{item.title}'.")
+            
+            # Optionally, delete the exported item if you don't want to keep it online
+            if delete_backup_online:
+                export_item.delete()
+        except Exception:
+            LOGGER.exception(f"Failed to back up {item.title}")
+    
+    for item in filtered_items:
+        backup_item(item)
