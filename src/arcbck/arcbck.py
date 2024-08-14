@@ -166,8 +166,11 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 export_item.delete()
         except Exception:
             LOGGER.exception(f"Failed to back up {item.title}")
-            if delete_backup_online and export_item:
-                export_item.delete()
+            if delete_backup_online:
+                try:
+                    export_item.delete()
+                except UnboundLocalError as e:
+                    LOGGER.debug(f"Export item was not yet created. {e}")
     
     with ThreadPoolExecutor(max_workers=max_concurrent_downloads) as executor:
         futures = {executor.submit(backup_item, item): item for item in filtered_items}
