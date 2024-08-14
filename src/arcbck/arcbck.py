@@ -5,7 +5,7 @@ from datetime import datetime
 import shutil
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
 import threading
 LOGGER = logging.getLogger(__name__)
 
@@ -195,32 +195,47 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                     thread_logger.debug(f"Export item was not yet created. {e}")
     
     # ----- Start threads -----
-    LOGGER.info("Starting threads...")
-    # Create a list to keep track of thread objects
-    threads = []
-    
-    # Semaphore to limit the number of concurrent threads
-    semaphore = threading.Semaphore(max_concurrent_downloads)
-
-    def worker(item, thread_logger):
-        with semaphore:
+    LOGGER.info("Starting threads...") 
+    # Create a queue to hold items to be processed
+    request_queue = queue.Queue()
+    # Add items to the queue
+    for item in filtered_items:
+        request_queue.put(item)
+        
+        
+    def worker(thread_logger):
+        while True:
+            item = request_queue.get()
+            if item is None:
+                break  # Stop the thread if there are no more items
             try:
                 backup_item(item, thread_logger)
             except Exception as e:
-                LOGGER.error(f"Issue with item {item.title}: {e}")
+                thread_logger.info(f"An exception occured, putting item back in queue. {e}.")
+                request_queue.put(item)
+            finally:
+                request_queue.task_done()
+                # Introduce a delay between requests
+                time.sleep(export_delay)  # Adjust delay as needed
 
-    # Create and start threads
-    for item in filtered_items:
+    # Start worker threads
+    threads = []
+    for _ in range(max_concurrent_downloads):
         thread_logger = logging.getLogger(__name__ + "." + item.title + ".thread")
-        thread = threading.Thread(target=worker, args=(item, thread_logger))
+        thread = threading.Thread(target=worker, args=(thread_logger,))
         thread.start()
         threads.append(thread)
-        time.sleep(export_delay)
+
     
-    # Wait for all threads to complete
+
+    # Block until all tasks are done
+    request_queue.join()
+
+    # Stop workers
+    for _ in range(max_concurrent_downloads):
+        request_queue.put(None)
     for thread in threads:
         thread.join()
-    
     
     END_TIME = time.time()    
     LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{found_items}), Time ({END_TIME-START_TIME}s)")
