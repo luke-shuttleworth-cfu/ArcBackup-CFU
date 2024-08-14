@@ -5,4 +5,4 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-from .arcbck import arcbck
+from .arcbck import run
