@@ -6,6 +6,7 @@ import shutil
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 LOGGER = logging.getLogger(__name__)
 
 def convert_date_format_to_regex(date_format: str) -> str:
@@ -46,7 +47,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
@@ -74,7 +75,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         # Create each subdirectory inside the base directory
         for name in directory_tags:
             subdirectory_path = os.path.join(full_directory_path, name)
-            os.makedirs(subdirectory_path, mode=directory_permissions, exist_ok=False)
+            os.makedirs(subdirectory_path, mode=directory_permissions, exist_ok=True)
             LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully")
     
     except PermissionError:
@@ -127,7 +128,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
-    
+    backup_count = [0]
+    count_lock = threading.Lock()
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
@@ -135,58 +137,89 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     LOGGER.info(f"Found {len(filtered_items)} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
     LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
     # Function to back up an item
-    def backup_item(item):
-        LOGGER.info(f"Backing up '{item.title}' ({item.type}).")
+    def backup_item(item, thread_logger):
+        thread_logger.info(f"Backing up '{item.title}' ({item.type}).")
         try:
             
             # Build item save path
             directory_tag = [tag for tag in item.tags if tag in directory_tags]
             if len(directory_tag) > 1:
-                LOGGER.warn(f"Multiple directory tags found for '{item.title}', {directory_tag}.")
+                thread_logger.warn(f"Multiple directory tags found for '{item.title}', {directory_tag}.")
                 save_tag = directory_tag[0]
             elif len(directory_tag) < 1:
-                LOGGER.warn(f"No directory tag found for item '{item.title}'.")
+                thread_logger.warn(f"No directory tag found for item '{item.title}'.")
                 save_tag = uncategorized_save_tag
             else:
                 save_tag = directory_tag[0]
             
             save_path = os.path.join(full_directory_path, save_tag)
             
+            # Ensure thread-safe directory creation
+            if not os.path.exists(save_path):
+                with threading.Lock():
+                    if not os.path.exists(save_path):
+                        os.makedirs(save_path, mode=directory_permissions)
             
             # Download item
             if item.type in ['Feature Service', 'Vector Tile Service']:
-                LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
-                export_item = item.export(title=item.title + backup_file_suffix, export_format="File Geodatabase")
+                thread_logger.info(f"Exporting '{item.title}' to GeoDatabase.")
+                delete = True
+                item_filename = item.title + backup_file_suffix
+                count = 1
+                while(os.path.exists(item_filename)):
+                    item_filename = item.title + backup_file_suffix + "(" + str(count) + ")"
+                    count += 1
+                export_item = item.export(title=item_filename, export_format="File Geodatabase")
             else:
-                LOGGER.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
+                thread_logger.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
+                delete = False
                 export_item = item
-            LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
+            thread_logger.info(f"Downloading '{item.title}' to '{save_tag}'.")
             export_item.download(save_path=save_path)
-            LOGGER.info(f"Backup complete for '{item.title}'.")
+            thread_logger.info(f"Backup complete for '{item.title}'.")
+            
+            with count_lock:
+                backup_count[0] += 1
             
             # Optionally, delete the exported item if you don't want to keep it online
-            if delete_backup_online:
+            if delete_backup_online and delete:
                 export_item.delete()
+                
         except Exception:
-            LOGGER.exception(f"Failed to back up '{item.title}'.")
-            if delete_backup_online:
+            thread_logger.exception(f"Failed to back up '{item.title}'.")
+            if delete_backup_online and delete:
                 try:
                     export_item.delete()
                 except UnboundLocalError as e:
-                    LOGGER.debug(f"Export item was not yet created. {e}")
+                    thread_logger.debug(f"Export item was not yet created. {e}")
     
-    # Start threads
+    # ----- Start threads -----
     LOGGER.info("Starting threads...")
-    with ThreadPoolExecutor(max_workers=max_concurrent_downloads) as executor:
-        futures = {executor.submit(backup_item, item): item for item in filtered_items}
-        
-        for future in as_completed(futures):
-            item = futures[future]
+    # Create a list to keep track of thread objects
+    threads = []
+    
+    # Semaphore to limit the number of concurrent threads
+    semaphore = threading.Semaphore(max_concurrent_downloads)
+
+    def worker(item, thread_logger):
+        with semaphore:
             try:
-                future.result()
-            except Exception:
-                LOGGER.exception(f"Exception occurred for '{item.title}'.")
+                backup_item(item, thread_logger)
+            except Exception as e:
+                LOGGER.error(f"Error backing up item {item.title}: {e}")
+
+    # Create and start threads
+    for item in filtered_items:
+        thread_logger = logging.getLogger(__name__ + "." + item.title + ".thread")
+        thread = threading.Thread(target=worker, args=(item, thread_logger))
+        thread.start()
+        threads.append(thread)
+        time.sleep(export_delay)
+    
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
     
     
     END_TIME = time.time()    
-    LOGGER.info(f"Backup complete - Items ({len(filtered_items)}), Time ({END_TIME-START_TIME}s)")
+    LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{len(filtered_items)}), Time ({END_TIME-START_TIME}s)")
