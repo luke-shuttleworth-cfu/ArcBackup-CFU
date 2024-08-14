@@ -165,8 +165,8 @@ venv.bak/
 # Windows
 Thumbs.db
 # 
-tests\
+tests/
 # 
-.vscode\
+.vscode/
 # 
-backups\
+backups/
