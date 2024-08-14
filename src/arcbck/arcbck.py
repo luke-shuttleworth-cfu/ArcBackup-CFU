@@ -4,6 +4,7 @@ from arcgis.gis import GIS
 from datetime import datetime
 import shutil
 import re
+import time
 LOGGER = logging.getLogger(__name__)
 
 def convert_date_format_to_regex(date_format: str) -> str:
@@ -45,6 +46,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
 
 
 def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool):
+    START_TIME = time.now()
     LOGGER.info("Beginning backup process...")
     
     # ----- Connect to arcgis -----
@@ -130,7 +132,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     items = gis.content.search(query=search_query, max_items=1000)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     LOGGER.info(f"Found {len(filtered_items)} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
-    LOGGER.debug(f"Items found: {filtered_items}.")
+    LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
     # Function to back up an item
     def backup_item(item):
         LOGGER.info(f"Backing up '{item.title}' ({item.type}).")
@@ -166,3 +168,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     for item in filtered_items:
         backup_item(item)
+    
+    
+    END_TIME = time.now()    
+    LOGGER.info(f"Backup complete - Items ({len(filtered_items)}), Time ({END_TIME-START_TIME}s)")
