@@ -166,6 +166,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 export_item.delete()
         except Exception:
             LOGGER.exception(f"Failed to back up {item.title}")
+            if delete_backup_online and export_item:
+                export_item.delete()
     
     with ThreadPoolExecutor(max_workers=max_concurrent_downloads) as executor:
         futures = {executor.submit(backup_item, item): item for item in filtered_items}
