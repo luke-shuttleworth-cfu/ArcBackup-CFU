@@ -47,7 +47,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
 
 
 def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int):
-    START_TIME = time.now()
+    START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
     # ----- Connect to arcgis -----
@@ -180,5 +180,5 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 LOGGER.exception(f"Exception occurred for '{item.title}'.")
     
     
-    END_TIME = time.now()    
+    END_TIME = time.time()    
     LOGGER.info(f"Backup complete - Items ({len(filtered_items)}), Time ({END_TIME-START_TIME}s)")
