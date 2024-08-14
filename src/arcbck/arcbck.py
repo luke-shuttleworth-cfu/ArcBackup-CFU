@@ -157,6 +157,9 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             if item.type in ['Feature Service', 'Vector Tile Service']:
                 LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
                 export_item = item.export(title=item.title + backup_file_suffix, export_format="File Geodatabase")
+            else:
+                LOGGER.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
+                export_item = item
             LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
             export_item.download(save_path=save_path)
             LOGGER.info(f"Backup complete for '{item.title}'.")
@@ -165,13 +168,15 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             if delete_backup_online:
                 export_item.delete()
         except Exception:
-            LOGGER.exception(f"Failed to back up {item.title}")
+            LOGGER.exception(f"Failed to back up '{item.title}'.")
             if delete_backup_online:
                 try:
                     export_item.delete()
                 except UnboundLocalError as e:
                     LOGGER.debug(f"Export item was not yet created. {e}")
     
+    # Start threads
+    LOGGER.info("Starting threads...")
     with ThreadPoolExecutor(max_workers=max_concurrent_downloads) as executor:
         futures = {executor.submit(backup_item, item): item for item in filtered_items}
         
