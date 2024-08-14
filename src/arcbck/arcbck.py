@@ -74,15 +74,15 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         for name in directory_tags:
             subdirectory_path = os.path.join(full_directory_path, name)
             os.makedirs(subdirectory_path, mode=directory_permissions, exist_ok=False)
-            LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully or already exists.")
+            LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully")
     
     except PermissionError:
         LOGGER.exception(f"Permission denied while creating directory '{full_directory_path}' or its subdirectories.")
     except FileExistsError:
         LOGGER.exception(f"An error occured while creating directory, '{full_directory_path}' already exists.")
         raise    
-    except Exception as e:
-        LOGGER.exception(f"An error occurred while creating directory '{full_directory_path}' or its subdirectories: {e}")
+    except Exception:
+        LOGGER.exception(f"An error occurred while creating directory '{full_directory_path}' or its subdirectories.")
     
     # ----- Delete old backups -----
     LOGGER.info("Removing old backups...")
