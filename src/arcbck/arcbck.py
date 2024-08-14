@@ -5,6 +5,7 @@ from datetime import datetime
 import shutil
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 LOGGER = logging.getLogger(__name__)
 
 def convert_date_format_to_regex(date_format: str) -> str:
@@ -45,7 +46,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int):
     START_TIME = time.now()
     LOGGER.info("Beginning backup process...")
     
@@ -166,8 +167,15 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         except Exception:
             LOGGER.exception(f"Failed to back up {item.title}")
     
-    for item in filtered_items:
-        backup_item(item)
+    with ThreadPoolExecutor(max_workers=max_concurrent_downloads) as executor:
+        futures = {executor.submit(backup_item, item): item for item in filtered_items}
+        
+        for future in as_completed(futures):
+            item = futures[future]
+            try:
+                future.result()
+            except Exception:
+                LOGGER.exception(f"Exception occurred for '{item.title}'.")
     
     
     END_TIME = time.now()    
