@@ -50,7 +50,7 @@ def _extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
@@ -63,13 +63,13 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     try:
         # Create the base directory
-        os.makedirs(full_directory_path, mode=directory_permissions, exist_ok=False)
+        os.makedirs(full_directory_path, exist_ok=False)
         LOGGER.info(f"Base directory '{full_directory_path}' created successfully.")
         
         # Create each subdirectory inside the base directory
         for name in directory_tags:
             subdirectory_path = os.path.join(full_directory_path, name)
-            os.makedirs(subdirectory_path, mode=directory_permissions, exist_ok=True)
+            os.makedirs(subdirectory_path, exist_ok=True)
             LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully")
     
     except PermissionError:
@@ -129,7 +129,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         except Exception:
             LOGGER.exception(f"An error occured deleting directory '{delete_path}'.")
     
-    
+    LOGGER.info("Old backups deleted.")
     
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
@@ -182,7 +182,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             if not os.path.exists(save_path):
                 with threading.Lock():
                     if not os.path.exists(save_path):
-                        os.makedirs(save_path, mode=directory_permissions)
+                        os.makedirs(save_path)
             
             # Download item
             if item.type in ['Feature Service', 'Vector Tile Service']:
