@@ -47,7 +47,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
@@ -88,23 +88,32 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     # ----- Delete old backups -----
     LOGGER.info("Removing old backups...")
-    # Get contents of backup directory
-    try:
-        entries = os.listdir(path=backup_directory)
-    except FileNotFoundError:
-        LOGGER.exception(f"Directory '{backup_directory}' not found.")
-    except NotADirectoryError:
-        LOGGER.exception(f"Error listing contents of directory. '{backup_directory}' is not a directory.")
-    except PermissionError:
-        LOGGER.exception(f"Permission denied for getting contents of directory '{backup_directory}'.")
-    except Exception:
-        LOGGER.exception(f"An error occured getting contents of directory '{backup_directory}'.")
-        
-    # Filter out entries that are not directories
-    existing_directories = [entry for entry in entries if os.path.isdir(os.path.join(backup_directory, entry))]
+    
     
     # Delete old backup folders
-    while len(existing_directories) > archive_number:
+    while True:
+        # Get contents of backup directory
+        try:
+            entries = os.listdir(path=backup_directory)
+        except FileNotFoundError:
+            LOGGER.exception(f"Directory '{backup_directory}' not found.")
+            raise
+        except NotADirectoryError:
+            LOGGER.exception(f"Error listing contents of directory. '{backup_directory}' is not a directory.")
+            raise
+        except PermissionError:
+            LOGGER.exception(f"Permission denied for getting contents of directory '{backup_directory}'.")
+            raise
+        except Exception:
+            LOGGER.exception(f"An error occured getting contents of directory '{backup_directory}'.")
+            raise
+            
+        # Filter out entries that are not directories
+        existing_directories = [entry for entry in entries if os.path.isdir(os.path.join(backup_directory, entry))]
+        
+        if len(existing_directories) > archive_number:
+            break
+        
         oldest_date = None
         oldest_filename = None
 
@@ -204,18 +213,22 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     request_queue = queue.Queue()
     # Add items to the queue
     for item in filtered_items:
-        request_queue.put(item)
+        # Add a tuple for each item containing the item and the number of retries
+        request_queue.put((item, 0))
         
         
     def worker(thread_logger):
         while True:
             item = request_queue.get()
+            if item[1] >= max_retries:
+                break
             if item is None:
                 break  # Stop the thread if there are no more items
             try:
-                backup_item(item, thread_logger)
+                backup_item(item[0], thread_logger)
             except Exception as e:
                 thread_logger.info(f"An exception occured, putting item back in queue. {e}.")
+                item[1] += 1
                 request_queue.put(item)
             finally:
                 request_queue.task_done()
