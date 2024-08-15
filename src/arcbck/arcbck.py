@@ -131,7 +131,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     backup_count = [0]
     count_lock = threading.Lock()
     # Search for items with the specified tags
-    search_query = "tags:(" + " AND ".join(backup_tags) + ")"
+    search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     found_items = len(filtered_items)
