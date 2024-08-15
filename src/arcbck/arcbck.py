@@ -47,14 +47,19 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_username: str, arcgis_password: str, arcgis_login_link: str, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_api_key: str | None, arcgis_username: str | None, arcgis_password: str | None, arcgis_login_link: str | None, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
     # ----- Connect to arcgis -----
     LOGGER.info("Connecting to ArcGIS...")
     try:
-        gis = GIS(arcgis_login_link, arcgis_username, arcgis_password)
+        if arcgis_username and arcgis_password and arcgis_login_link:
+            gis = GIS(arcgis_login_link, arcgis_username, arcgis_password)
+        elif arcgis_api_key and arcgis_login_link:
+            gis = GIS(url=arcgis_login_link, api_key=arcgis_api_key)
+        else:
+            raise ValueError("No ArcGIS credentials specified")
         LOGGER.debug("Successfully connected to ArcGIS Online portal")
     except Exception:
         LOGGER.exception("An error occured connecting to ArcGIS Online portal.")
@@ -141,7 +146,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     count_lock = threading.Lock()
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
-    items = gis.content.search(query=search_query, max_items=1000)
+    items = gis.content.search(query=search_query, max_items=100)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     found_items = len(filtered_items)
     if found_items > 0:  
@@ -214,18 +219,18 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     # Add items to the queue
     for item in filtered_items:
         # Add a tuple for each item containing the item and the number of retries
-        request_queue.put((item, 0))
+        request_queue.put([item, 0])
         
         
     def worker(thread_logger):
         while True:
             item = request_queue.get()
-            print(item)
-            if item[1] >= max_retries:
-                break
-            if item is None:
-                break  # Stop the thread if there are no more items
+            
             try:
+                if item[1] >= max_retries:
+                    break
+                if item is None:
+                    break  # Stop the thread if there are no more items
                 backup_item(item[0], thread_logger)
             except Exception as e:
                 thread_logger.info(f"An exception occured, putting item back in queue. {e}.")
