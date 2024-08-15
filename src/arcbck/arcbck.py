@@ -12,7 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 
-def convert_date_format_to_regex(date_format: str) -> str:
+def _convert_date_format_to_regex(date_format: str) -> str:
     """Convert a date format string to a regular expression pattern."""
     format_map = {
         '%Y': r'\d{4}',      # Year
@@ -29,9 +29,9 @@ def convert_date_format_to_regex(date_format: str) -> str:
     
     return regex_pattern
 
-def extract_date_from_filename(filename: str, prefix: str, date_format: str):
+def _extract_date_from_filename(filename: str, prefix: str, date_format: str):
     # Convert date format to regex pattern
-    date_regex = convert_date_format_to_regex(date_format)
+    date_regex = _convert_date_format_to_regex(date_format)
     
     # Define the regular expression pattern for the filename format
     pattern = re.compile(rf'{re.escape(prefix)}({date_regex})')
@@ -50,23 +50,9 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_api_key: str | None, arcgis_username: str | None, arcgis_password: str | None, arcgis_login_link: str | None, delete_backup_online: bool, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
-    
-    # ----- Connect to arcgis -----
-    LOGGER.info("Connecting to ArcGIS...")
-    try:
-        if arcgis_username and arcgis_password and arcgis_login_link:
-            gis = GIS(arcgis_login_link, arcgis_username, arcgis_password)
-        elif arcgis_api_key and arcgis_login_link:
-            gis = GIS(url=arcgis_login_link, api_key=arcgis_api_key)
-        else:
-            raise ValueError("No ArcGIS credentials specified")
-        LOGGER.debug("Successfully connected to ArcGIS Online portal")
-    except Exception:
-        LOGGER.exception("An error occured connecting to ArcGIS Online portal.")
-        raise
     
     # ----- Create backup directory -----
     LOGGER.info("Creating backup directory...")
@@ -126,7 +112,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         oldest_filename = None
 
         for filename in existing_directories:
-            date = extract_date_from_filename(filename, backup_directory_prefix, date_format)
+            date = _extract_date_from_filename(filename, backup_directory_prefix, date_format)
             if date:
                 if oldest_date is None or date < oldest_date:
                     oldest_date = date
