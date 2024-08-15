@@ -111,7 +111,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         # Filter out entries that are not directories
         existing_directories = [entry for entry in entries if os.path.isdir(os.path.join(backup_directory, entry))]
         
-        if len(existing_directories) > archive_number:
+        if len(existing_directories) < archive_number:
             break
         
         oldest_date = None
@@ -220,6 +220,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     def worker(thread_logger):
         while True:
             item = request_queue.get()
+            print(item)
             if item[1] >= max_retries:
                 break
             if item is None:
