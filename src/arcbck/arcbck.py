@@ -69,7 +69,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     try:
         # Create the base directory
-        os.makedirs(full_directory_path, mode=directory_permissions, exist_ok=True)
+        os.makedirs(full_directory_path, mode=directory_permissions, exist_ok=False)
         LOGGER.info(f"Base directory '{full_directory_path}' created successfully.")
         
         # Create each subdirectory inside the base directory
@@ -131,12 +131,16 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     backup_count = [0]
     count_lock = threading.Lock()
     # Search for items with the specified tags
-    search_query = "tags:(" + " OR ".join(backup_tags) + ")"
+    search_query = "tags:(" + " AND ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     found_items = len(filtered_items)
-    LOGGER.info(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
-    LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
+    if found_items > 0:  
+        LOGGER.info(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
+        LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
+    else:
+        LOGGER.error(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}. Aborting backup.")
+        exit()
     # Function to back up an item
     def backup_item(item, thread_logger):
         thread_logger.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
