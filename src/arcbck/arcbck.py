@@ -7,7 +7,10 @@ import re
 import time
 import queue
 import threading
+import uuid
 LOGGER = logging.getLogger(__name__)
+
+
 
 def convert_date_format_to_regex(date_format: str) -> str:
     """Convert a date format string to a regular expression pattern."""
@@ -47,7 +50,7 @@ def extract_date_from_filename(filename: str, prefix: str, date_format: str):
     return None
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_api_key: str | None, arcgis_username: str | None, arcgis_password: str | None, arcgis_login_link: str | None, delete_backup_online: bool, max_concurrent_downloads: int, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], directory_permissions: int, date_format: str, archive_number: int, arcgis_api_key: str | None, arcgis_username: str | None, arcgis_password: str | None, arcgis_login_link: str | None, delete_backup_online: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
@@ -140,6 +143,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         except Exception:
             LOGGER.exception(f"An error occured deleting directory '{delete_path}'.")
     
+    
+    
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
     backup_count = [0]
@@ -156,17 +161,30 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         LOGGER.error(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}. Aborting backup.")
         exit()
     # Function to back up an item
-    def backup_item(item, thread_logger):
-        thread_logger.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
+    def backup_item(item):
+        with count_lock:
+            backup_count[0] += 1
+        def delete_item(item_name: str):
+            items = gis.content.search(query=f"title:{item_name}", max_items=1000)
+            if items:
+                for item in items:
+                    try:
+                        item.delete()
+                        LOGGER.debug(f"Deleted item '{item.title}' successfully.")
+                    except Exception:
+                        LOGGER.exception(f"Error deleting item '{item.title}'.")
+            else:
+                LOGGER.debug(f"Unable to delete, '{item.title}' not found.")
+        LOGGER.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
         try:
             
             # Build item save path
             directory_tag = [tag for tag in item.tags if tag in directory_tags]
             if len(directory_tag) > 1:
-                thread_logger.warn(f"Multiple directory tags found for '{item.title}', {directory_tag}.")
+                LOGGER.warn(f"Multiple directory tags found for '{item.title}', {directory_tag}.")
                 save_tag = directory_tag[0]
             elif len(directory_tag) < 1:
-                thread_logger.warn(f"No directory tag found for item '{item.title}'.")
+                LOGGER.warn(f"No directory tag found for item '{item.title}'.")
                 save_tag = uncategorized_save_tag
             else:
                 save_tag = directory_tag[0]
@@ -181,39 +199,32 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             
             # Download item
             if item.type in ['Feature Service', 'Vector Tile Service']:
-                thread_logger.info(f"Exporting '{item.title}' to GeoDatabase.")
+                LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
                 delete = True
-                item_filename = item.title + backup_file_suffix
-                count = 1
-                while(os.path.exists(item_filename)):
-                    item_filename = item.title + backup_file_suffix + "(" + str(count) + ")"
-                    count += 1
+                item_filename = item.title + backup_file_suffix + '_' + uuid.uuid4().hex
                 export_item = item.export(title=item_filename, export_format="File Geodatabase")
             else:
-                thread_logger.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
+                LOGGER.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
                 delete = False
                 export_item = item
-            thread_logger.info(f"Downloading '{item.title}' to '{save_tag}'.")
+            LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
             export_item.download(save_path=save_path)
             
             
-            with count_lock:
-                backup_count[0] += 1
-            thread_logger.info(f"Backup complete for '{item.title}'. ({backup_count[0]}/{found_items})")
+            
+            LOGGER.info(f"Backup complete for '{item.title}'. ({backup_count[0]}/{found_items})")
             # Optionally, delete the exported item if you don't want to keep it online
             if delete_backup_online and delete:
-                export_item.delete()
+                delete_item(item_filename)
                 
         except Exception:
-            thread_logger.exception(f"Error with '{item.title}'.")
+            LOGGER.error(f"Error with '{item.title}'.")
+            backup_count[0] -= 1
             if delete_backup_online and delete:
-                try:
-                    export_item.delete()
-                except UnboundLocalError as e:
-                    thread_logger.debug(f"Export item was not yet created. {e}")
+                delete_item(item_filename)
     
     # ----- Start threads -----
-    LOGGER.info("Starting threads...") 
+    LOGGER.info("Starting backups...") 
     # Create a queue to hold items to be processed
     request_queue = queue.Queue()
     # Add items to the queue
@@ -222,43 +233,26 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         request_queue.put([item, 0])
         
         
-    def worker(thread_logger):
-        while True:
-            item = request_queue.get()
-            
+    while request_queue.not_empty:
+        item = request_queue.get()
+        if item[1] < max_retries:
             try:
-                if item[1] >= max_retries:
-                    break
-                if item is None:
-                    break  # Stop the thread if there are no more items
-                backup_item(item[0], thread_logger)
-            except Exception as e:
-                thread_logger.info(f"An exception occured, putting item back in queue. {e}.")
+                backup_item(item[0])
+            except Exception:
+                LOGGER.exception(f"An error occured with item '{item[0].title}'.")
                 item[1] += 1
                 request_queue.put(item)
-            finally:
-                request_queue.task_done()
-                # Introduce a delay between requests
-                time.sleep(export_delay)  # Adjust delay as needed
+        
+            
 
-    # Start worker threads
-    threads = []
-    for _ in range(max_concurrent_downloads):
-        thread_logger = logging.getLogger(__name__ + "." + item.title + ".thread")
-        thread = threading.Thread(target=worker, args=(thread_logger,))
-        thread.start()
-        threads.append(thread)
+    
 
     
 
     # Block until all tasks are done
     request_queue.join()
 
-    # Stop workers
-    for _ in range(max_concurrent_downloads):
-        request_queue.put(None)
-    for thread in threads:
-        thread.join()
+    
     
     END_TIME = time.time()    
     LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{found_items}), Time ({END_TIME-START_TIME}s)")
