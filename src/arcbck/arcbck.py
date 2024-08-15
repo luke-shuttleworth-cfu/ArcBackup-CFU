@@ -164,15 +164,16 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     def backup_item(item):
         with count_lock:
             backup_count[0] += 1
+        # Function to delete an item
         def delete_item(item_name: str):
             items = gis.content.search(query=f"title:{item_name}", max_items=1000)
             if items:
                 for item in items:
                     try:
                         item.delete()
-                        LOGGER.debug(f"Deleted item '{item.title}' successfully.")
+                        LOGGER.debug(f"Deleted item '{item_name}' successfully.")
                     except Exception:
-                        LOGGER.exception(f"Error deleting item '{item.title}'.")
+                        LOGGER.exception(f"Error deleting item '{item_name}'.")
             else:
                 LOGGER.debug(f"Unable to delete, '{item.title}' not found.")
         LOGGER.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
