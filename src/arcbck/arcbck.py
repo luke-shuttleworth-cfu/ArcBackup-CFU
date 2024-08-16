@@ -8,6 +8,7 @@ import time
 import queue
 import threading
 import uuid
+import requests
 LOGGER = logging.getLogger(__name__)
 
 
@@ -49,6 +50,23 @@ def _extract_date_from_filename(filename: str, prefix: str, date_format: str):
     
     return None
 
+def _download_item_without_retry(item, save_path):
+    # Get the URL for the item
+    download_url = item.download_url
+    
+    # Try downloading the file without retry
+    try:
+        response = requests.get(download_url, stream=True)
+        response.raise_for_status()  # Raise an HTTPError for bad responses
+
+        with open(save_path, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                file.write(chunk)
+        LOGGER.debug(f"Download completed successfully: {save_path}")
+
+    except requests.exceptions.RequestException as e:
+        LOGGER.exception(f"Download failed on '{item.title}'.")
+        
 
 def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
@@ -142,7 +160,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     found_items = len(filtered_items)
     if found_items > 0:  
         LOGGER.info(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
-        LOGGER.debug(f"Items found: {[item.title for item in filtered_items]}.")
+        LOGGER.info(f"Items found: {[item.title for item in filtered_items]}.")
     else:
         LOGGER.error(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}. Aborting backup.")
         exit()
@@ -195,20 +213,21 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 delete = False
                 export_item = item
             LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
-            export_item.download(save_path=save_path)
+            
+            _download_item_without_retry(item=export_item, save_path=save_path)
             
             
             
             LOGGER.info(f"Backup complete for '{item.title}'. ({backup_count[0]}/{found_items})")
             # Optionally, delete the exported item if you don't want to keep it online
             if delete_backup_online and delete:
-                delete_item(item_filename)
-                
+                delete_item(item_filename)        
         except Exception:
             LOGGER.error(f"Error with '{item.title}'.")
             backup_count[0] -= 1
             if delete_backup_online and delete:
                 delete_item(item_filename)
+            raise
     
     # ----- Start threads -----
     LOGGER.info("Starting backups...") 
