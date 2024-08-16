@@ -19,7 +19,7 @@ backup_log = {
         'success': None,
         'total items': None,
         'backed up items': 0,
-        'size': 0
+        'size': None
     },
     'items': {}
 }
@@ -170,10 +170,10 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
-    backup_count = [0]
+    backup_count = 0
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
-    items = gis.content.search(query=search_query, max_items=100)
+    items = gis.content.search(query=search_query, max_items=2)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     found_items = len(filtered_items)
     backup_log['info']['total items'] = found_items
@@ -202,7 +202,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         
     # Function to back up an item
     def backup_item(item):
-        backup_count[0] += 1
+        backup_count += 1
         # Function to delete an item
         def delete_item(item_name: str):
             items = gis.content.search(query=f"title:{item_name}", max_items=1000)
@@ -215,7 +215,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                         LOGGER.exception(f"Error deleting item '{item_name}'.")
             else:
                 LOGGER.debug(f"Unable to delete, '{item.title}' not found.")
-        LOGGER.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
+        LOGGER.info(f"Backing up '{item.title}' ({item.type}). ({backup_count}/{found_items})")
         backup_log['items'][str(item.id)]['status'] = 'BACKING'
         _save_json_log(full_directory_path, directory_name)
         try:
@@ -252,6 +252,10 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 delete = False
                 export_item = item
             LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
+            
+            # make this check/dynamically expand ----------------------------------------------------
+            
+            
             backup_log['items'][str(item.id)]['status'] = 'DOWNLOADING'
             backup_log['items'][str(item.id)]['backup_path'] = os.path.join(save_path, item_filename) 
             _save_json_log(full_directory_path, directory_name)
@@ -259,13 +263,13 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             
             
             
-            LOGGER.info(f"Backup complete for '{item.title}'. ({backup_count[0]}/{found_items})")
+            LOGGER.info(f"Backup complete for '{item.title}'. ({backup_count}/{found_items})")
             # Optionally, delete the exported item if you don't want to keep it online
             if delete_backup_online and delete:
                 delete_item(item_filename)        
         except Exception:
             LOGGER.error(f"Error with '{item.title}'.")
-            backup_count[0] -= 1
+            backup_count -= 1
             if delete_backup_online and delete:
                 delete_item(item_filename)
             raise
@@ -280,8 +284,11 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         request_queue.put([item, 0])
         
         
-    while request_queue.not_empty:
+    while not request_queue.empty():
+        print(request_queue.empty())
         item = request_queue.get()
+        if item is None:
+            break
         if item[1] < max_retries:
             try:
                 backup_item(item[0])
@@ -307,13 +314,20 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     
     backup_log['info']['size'] = get_folder_size(full_directory_path)  / (1024 * 1024 * 1024)
     backup_log['info']['backed up items'] = backup_count
+    
+    for key, value in backup_log['items'].items():
+        value = value['success']
+        if not value:
+            backup_log['info']['success'] = False
+            break
+        backup_log['info']['success'] = True
+    
     _save_json_log(full_directory_path, directory_name)
     
 
-    # Block until all tasks are done
-    request_queue.join()
+    
 
     
     
     END_TIME = time.time()    
-    LOGGER.info(f"Backup complete - Items ({backup_count[0]}/{found_items}), Time ({END_TIME-START_TIME}s)")
+    LOGGER.info(f"Backup complete - Items ({backup_count}/{found_items}), Time ({END_TIME-START_TIME}s)")
