@@ -9,9 +9,20 @@ import queue
 import threading
 import uuid
 import requests
+import json
 LOGGER = logging.getLogger(__name__)
 
-
+backup_log = {
+    'info': {
+        'date': None,
+        'directory': None,
+        'success': None,
+        'total items': None,
+        'backed up items': 0,
+        'size': 0
+    },
+    'items': {}
+}
 
 def _convert_date_format_to_regex(date_format: str) -> str:
     """Convert a date format string to a regular expression pattern."""
@@ -67,6 +78,10 @@ def _download_item_without_retry(item, save_path):
     except requests.exceptions.RequestException as e:
         LOGGER.exception(f"Download failed on '{item.title}'.")
         
+def _save_json_log(path: str, name: str):
+    path = os.path.join(path, name + '.json')
+    with open(path, 'w') as f:
+        f.write(json.dumps(backup_log, indent=4))
 
 def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
@@ -77,6 +92,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     current_date = datetime.now().strftime(date_format)
     directory_name = backup_directory_prefix + current_date
     full_directory_path = os.path.join(backup_directory, directory_name)
+    
     LOGGER.debug(f"Creating backup directory '{full_directory_path}'.")
     
     try:
@@ -89,6 +105,9 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             subdirectory_path = os.path.join(full_directory_path, name)
             os.makedirs(subdirectory_path, exist_ok=True)
             LOGGER.info(f"Subdirectory '{subdirectory_path}' created successfully")
+        backup_log['info']['date'] = current_date
+        backup_log['info']['directory'] = full_directory_path
+        _save_json_log(full_directory_path, directory_name)
     
     except PermissionError:
         LOGGER.exception(f"Permission denied while creating directory '{full_directory_path}' or its subdirectories.")
@@ -152,22 +171,38 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     # ----- Start backup -----
     LOGGER.info("Backing up files...")
     backup_count = [0]
-    count_lock = threading.Lock()
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=100)
     filtered_items = [item for item in items if item.type not in backup_exclude_types]
     found_items = len(filtered_items)
+    backup_log['info']['total items'] = found_items
+    _save_json_log(full_directory_path, directory_name)
     if found_items > 0:  
         LOGGER.info(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}.")
         LOGGER.info(f"Items found: {[item.title for item in filtered_items]}.")
     else:
         LOGGER.error(f"Found {found_items} items with tags {backup_tags}, excluding types {backup_exclude_types}. Aborting backup.")
         exit()
+    
+    
+    for item in filtered_items:
+        backup_log['items'][str(item.id)] = {
+            'title': item.title,
+            'type': item.type,
+            'tags': item.tags,
+            'status': None,
+            'success': False,
+            'retries': 0,
+            'error': None,
+            'backup_path': None
+        }
+        _save_json_log(full_directory_path, directory_name)
+        
+        
     # Function to back up an item
     def backup_item(item):
-        with count_lock:
-            backup_count[0] += 1
+        backup_count[0] += 1
         # Function to delete an item
         def delete_item(item_name: str):
             items = gis.content.search(query=f"title:{item_name}", max_items=1000)
@@ -181,6 +216,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             else:
                 LOGGER.debug(f"Unable to delete, '{item.title}' not found.")
         LOGGER.info(f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
+        backup_log['items'][str(item.id)]['status'] = 'BACKING'
+        _save_json_log(full_directory_path, directory_name)
         try:
             
             # Build item save path
@@ -207,14 +244,18 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                 LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
                 delete = True
                 item_filename = item.title + backup_file_suffix + '_' + uuid.uuid4().hex
+                backup_log['items'][str(item.id)]['status'] = 'EXPORTING'
+                _save_json_log(full_directory_path, directory_name)
                 export_item = item.export(title=item_filename, export_format="File Geodatabase")
             else:
                 LOGGER.debug(f"The type of item '{item.title}' ({item.type}) does not have export capababilities.")
                 delete = False
                 export_item = item
             LOGGER.info(f"Downloading '{item.title}' to '{save_tag}'.")
-            
-            _download_item_without_retry(item=export_item, save_path=save_path)
+            backup_log['items'][str(item.id)]['status'] = 'DOWNLOADING'
+            backup_log['items'][str(item.id)]['backup_path'] = os.path.join(save_path, item_filename) 
+            _save_json_log(full_directory_path, directory_name)
+            export_item.download(save_path=save_path)
             
             
             
@@ -244,15 +285,29 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         if item[1] < max_retries:
             try:
                 backup_item(item[0])
-            except Exception:
+                backup_log['items'][str(item[0].id)]['success'] = True
+                backup_log['items'][str(item[0].id)]['status'] = 'COMPLETE'
+                _save_json_log(full_directory_path, directory_name)
+            except Exception as e:
                 LOGGER.exception(f"An error occured with item '{item[0].title}'.")
                 item[1] += 1
+                backup_log['items'][str(item[0].id)]['retries'] += 1
+                backup_log['items'][str(item[0].id)]['error'] =e
+                _save_json_log(full_directory_path, directory_name)
                 request_queue.put(item)
         
             
-
+    def get_folder_size(folder_path):
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(folder_path):
+            for filename in filenames:
+                file_path = os.path.join(dirpath, filename)
+                total_size += os.path.getsize(file_path)
+        return total_size
     
-
+    backup_log['info']['size'] = get_folder_size(full_directory_path)  / (1024 * 1024 * 1024)
+    backup_log['info']['backed up items'] = backup_count
+    _save_json_log(full_directory_path, directory_name)
     
 
     # Block until all tasks are done
