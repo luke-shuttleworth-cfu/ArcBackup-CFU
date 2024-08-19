@@ -220,12 +220,12 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             if not os.path.exists(save_path):
                 if not os.path.exists(save_path):
                     os.makedirs(save_path)
-            
+            item_filename = item.title + backup_file_suffix + '_' + uuid.uuid4().hex
             # Download item
             if item.type in ['Feature Service', 'Vector Tile Service']:
                 LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
                 delete = True
-                item_filename = item.title + backup_file_suffix + '_' + uuid.uuid4().hex
+                
                 backup_log['items'][str(item.id)]['status'] = 'EXPORTING'
                 _save_json_log(full_directory_path, directory_name)
                 export_item = item.export(title=item_filename, export_format="File Geodatabase")
@@ -238,32 +238,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             # make this check/dynamically expand
             
             
-            '''
-            available_space = shutil.disk_usage(save_path).free
-            required_space = export_item.size
-            temp_file_path = os.path.join(save_path, 'tempfile.tmp')
-            if(available_space < required_space):
-                LOGGER.info(f"Not enough space, expanding drive ({available_space/1024*1024*1024}/{required_space/1024*1024*1024})")
-                
-                gb = 0
-                while available_space < required_space:
-                    with open(temp_file_path, 'ab+') as f:
-                        try:
-                            f.write(b'\0' * 1073741824)
-                            gb += 1
-                        except OSError as e:
-                            if e.errno == 28:
-                                pass
-                            else:
-                                raise
-                   
-                    
-                    print(gb)
-                    available_space = shutil.disk_usage(save_path).free + gb * 1024 * 1024 * 1024
-                LOGGER.debug(f"Wrote {gb} gb.")
-                os.remove(temp_file_path)    
             
-            '''
             backup_log['items'][str(item.id)]['status'] = 'DOWNLOADING'
             backup_log['items'][str(item.id)]['backup_path'] = os.path.join(save_path, item_filename) 
             _save_json_log(full_directory_path, directory_name)
