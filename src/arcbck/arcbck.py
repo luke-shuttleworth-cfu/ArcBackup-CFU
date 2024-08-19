@@ -66,7 +66,7 @@ def _save_json_log(path: str, name: str):
     with open(path, 'w') as f:
         f.write(json.dumps(backup_log, indent=4))
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, ignore_existing: bool, export_delay=2, max_retries=5):
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
     
@@ -157,7 +157,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
-    filtered_items = [item for item in items if item.type not in backup_exclude_types]
+    existing_backup_pattern = rf"{backup_file_suffix}[0-9a-fA-F]{32}"
+    filtered_items = [item for item in items if item.type not in backup_exclude_types and (re.search(existing_backup_pattern, item.title) is None and ignore_existing)]
     found_items = len(filtered_items)
     backup_log['info']['total items'] = found_items
     _save_json_log(full_directory_path, directory_name)
@@ -220,7 +221,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             if not os.path.exists(save_path):
                 if not os.path.exists(save_path):
                     os.makedirs(save_path)
-            item_filename = item.title + backup_file_suffix + '_' + uuid.uuid4().hex
+            item_filename = item.title + backup_file_suffix + uuid.uuid4().hex
             # Download item
             if item.type in ['Feature Service', 'Vector Tile Service']:
                 LOGGER.info(f"Exporting '{item.title}' to GeoDatabase.")
