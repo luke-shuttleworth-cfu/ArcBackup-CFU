@@ -69,7 +69,7 @@ def _save_json_log(path: str, name: str):
         f.write(json.dumps(backup_log, indent=4))
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, ignore_existing: bool, export_delay=2, max_retries=5):
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, ignore_existing: bool, export_delay=2, max_retries=5) -> dict:
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
 
@@ -135,8 +135,8 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         # Filter out entries that are not directories
         existing_directories = [entry for entry in entries if os.path.isdir(
             os.path.join(backup_directory, entry))]
-
-        if len(existing_directories) < archive_number:
+        LOGGER.debug(f'Found {len(existing_directories)} directories.')
+        if len(existing_directories) - 1 < archive_number:
             break
 
         oldest_date = None
@@ -153,15 +153,18 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
         try:
             delete_path = os.path.join(backup_directory, oldest_filename)
             shutil.rmtree(path=delete_path)
-            LOGGER.log(f"Removed backup directory '{oldest_filename}'.")
+            LOGGER.info(f"Removed backup directory '{oldest_filename}'.")
         except FileNotFoundError:
             LOGGER.exception(f"Directory '{delete_path}' not found.")
+            raise
         except PermissionError:
             LOGGER.exception(
                 f"Permission denied for deleting '{delete_path}'.")
+            raise
         except Exception:
             LOGGER.exception(
                 f"An error occured deleting directory '{delete_path}'.")
+            raise
 
     LOGGER.info("Old backups deleted.")
 
@@ -331,3 +334,4 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     END_TIME = time.time()
     LOGGER.info(
         f"Backup complete - Items ({backup_count[0]}/{found_items}), Time ({END_TIME-START_TIME}s)")
+    return backup_log
