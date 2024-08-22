@@ -8,7 +8,28 @@ import time
 import queue
 import uuid
 import json
+import threading
 LOGGER = logging.getLogger(__name__)
+
+class StoppableThread(threading.Thread):
+    def __init__(self, target=None, args=(), kwargs=None):
+        super().__init__()
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs if kwargs is not None else {}
+        self._stop_event = threading.Event()
+
+    def run(self):
+        if self._target:
+            while not self._stop_event.is_set():
+                self._target(*self._args, **self._kwargs)
+                if self._stop_event.is_set():
+                    break
+                # Optional: Sleep for a short period to avoid tight loop
+                time.sleep(0.1)
+                
+    def stop(self):
+        self._stop_event.set()
 
 backup_log = {
     'info': {
@@ -69,7 +90,7 @@ def _save_json_log(path: str, name: str):
         f.write(json.dumps(backup_log, indent=4))
 
 
-def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, ignore_existing: bool, export_delay=2, max_retries=5) -> dict:
+def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix: str, backup_tags: list[str], directory_tags: list[str],  uncategorized_save_tag: str, backup_exclude_types: list[str], date_format: str, archive_number: int, gis: GIS, delete_backup_online: bool, ignore_existing: bool, timeout: int, max_retries=5) -> dict:
     START_TIME = time.time()
     LOGGER.info("Beginning backup process...")
 
@@ -220,7 +241,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                     except Exception:
                         LOGGER.exception(f"Error deleting item '{item_name}'.")
             else:
-                LOGGER.debug(f"Unable to delete, '{item.title}' not found.")
+                LOGGER.debug(f"Unable to delete, '{item_name}' not found.")
         LOGGER.info(
             f"Backing up '{item.title}' ({item.type}). ({backup_count[0]}/{found_items})")
         backup_log['items'][str(item.id)]['status'] = 'BACKING'
@@ -297,7 +318,12 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
             break
         if item[1] < max_retries:
             try:
-                backup_item(item[0])
+                thd = StoppableThread(target=backup_item, args=(item[0],))
+                thd.start()
+                thd.join(timeout)
+                if thd.is_alive():
+                    thd.stop()
+                    raise Exception("Backup timed out for item.")
                 backup_log['items'][str(item[0].id)]['success'] = True
                 backup_log['items'][str(item[0].id)]['status'] = 'COMPLETE'
                 _save_json_log(full_directory_path, directory_name)
@@ -306,7 +332,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
                     f"An error occured with item '{item[0].title}'.")
                 item[1] += 1
                 backup_log['items'][str(item[0].id)]['retries'] += 1
-                backup_log['items'][str(item[0].id)]['error'] = e
+                backup_log['items'][str(item[0].id)]['error'] = str(e)
                 _save_json_log(full_directory_path, directory_name)
                 request_queue.put(item)
 
