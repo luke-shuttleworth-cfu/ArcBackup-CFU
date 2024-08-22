@@ -195,7 +195,7 @@ def run(backup_directory: str, backup_directory_prefix: str, backup_file_suffix:
     # Search for items with the specified tags
     search_query = "tags:(" + " OR ".join(backup_tags) + ")"
     items = gis.content.search(query=search_query, max_items=1000)
-    existing_backup_pattern = rf"{backup_file_suffix}[0-9a-fA-F]{{32}}"
+    existing_backup_pattern = rf"{backup_file_suffix}[0-9a-fA-F]{32}"
     filtered_items = [item for item in items if item.type not in backup_exclude_types and (
         re.search(existing_backup_pattern, item.title) is None and ignore_existing)]
     found_items = len(filtered_items)
